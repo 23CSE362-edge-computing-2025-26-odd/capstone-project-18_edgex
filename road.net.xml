@@ -1,9 +1,0 @@
-<nodes>
-    <node id="1" x="0.0" y="0.0" type="priority"/>
-    <node id="2" x="500.0" y="0.0" type="priority"/>
-</nodes>
-<edges>
-<edge id="e1" from="1" to="2" priority="1">
-    <lane index="0" speed="13.89" length="500.0"/>
-</edge>
-</edges>
