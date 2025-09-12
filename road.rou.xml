@@ -1,0 +1,5 @@
+<routes>
+    <vType id="car" maxSpeed="13.89" />
+    <route id="r1" edges="e1" />
+    <vehicle id="my_smart_car" type="car" route="r1" depart="0" />
+</routes>
