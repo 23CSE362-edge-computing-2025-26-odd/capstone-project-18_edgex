@@ -7,41 +7,68 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 
 /**
- * PythonClient
+ * PythonClient - UPDATED
  *
- * Minimal HTTP client to call the Flask inference server.
- * - POST /predict_drowsiness  -> {"features":[...]}
- * - POST /predict_priority   -> {"drowsiness":0.5,"rain":0.2,"speed":60.0,"humidity":0.3}
- *
- * Returns JSON strings (very small).
+ * This client now communicates with two separate CI microservices:
+ * 1. The GA Classifier on port 5000 to get a priority label.
+ * 2. The Fuzzy Allocator on port 6000 to get a resource decision.
  */
 public class PythonClient {
 
-    private final String baseUrl;
+    private final String gaServerUrl = "http://127.0.0.1:5000";
+    private final String fuzzyServerUrl = "http://127.0.0.1:6000";
 
-    public PythonClient(String baseUrl) {
-        this.baseUrl = baseUrl;
+    public PythonClient() {
+        // Constructor is now empty
     }
 
-    public double predictPriority(double drowsiness, double rain, double speed, double humidity) throws Exception {
+    /**
+     * Calls the GA server to get a priority classification.
+     * @return The priority label as a String (e.g., "HIGH", "MEDIUM", "LOW").
+     */
+    public String predictPriority(double drowsiness, double rain, double speed, double humidity) throws Exception {
         String endpoint = "/predict_priority";
-        String payload = String.format("{\"drowsiness\": %.4f, \"rain\": %.4f, \"speed\": %.2f, \"humidity\": %.4f}",
-                drowsiness, rain, speed, humidity);
-        String response = post(endpoint, payload);
-        // crude parse: expect {"priority":0.6812}
-        if (response == null || !response.contains("priority")) return 0.0;
-        String num = response.replaceAll("[^0-9\\.]+", "");
-        if (num.isEmpty()) return 0.0;
-        return Double.parseDouble(num);
+        String payload = String.format(
+                "{\"drowsiness\": %.4f, \"rain\": %.4f, \"speed\": %.2f, \"humidity\": %.4f}",
+                drowsiness, rain, speed, humidity
+        );
+
+        String response = post(gaServerUrl + endpoint, payload);
+
+        // Parse JSON response like {"priority": "HIGH"}
+        if (response != null && response.contains("priority")) {
+            return response.split(":")[1].replace("\"", "").replace("}", "").trim();
+        }
+        return "LOW"; // Fallback
     }
 
-    private String post(String endpoint, String jsonPayload) throws Exception {
-        URL url = new URL(baseUrl + endpoint);
+    /**
+     * Calls the Fuzzy Logic server to get a resource allocation decision.
+     * @param priorityLabel The label obtained from the GA server.
+     * @return The full decision string from the fuzzy server.
+     */
+    public String allocateResources(String priorityLabel) throws Exception {
+        String endpoint = "/allocate_resources";
+        String payload = String.format("{\"priority\": \"%s\"}", priorityLabel);
+
+        String response = post(fuzzyServerUrl + endpoint, payload);
+
+        // Parse decision from a complex JSON, for logging we just return the 'decision' field
+        if (response != null && response.contains("decision")) {
+            // A simple parse for the main decision string
+            String decision = response.split("\"decision\": \"")[1];
+            return decision.substring(0, decision.length() - 2); // Remove trailing "}"
+        }
+        return "No allocation decision received.";
+    }
+
+    private String post(String urlString, String jsonPayload) throws Exception {
+        URL url = new URL(urlString);
         HttpURLConnection conn = (HttpURLConnection) url.openConnection();
         conn.setRequestMethod("POST");
         conn.setRequestProperty("Content-Type", "application/json");
-        conn.setConnectTimeout(1500);
-        conn.setReadTimeout(1500);
+        conn.setConnectTimeout(2000);
+        conn.setReadTimeout(2000);
         conn.setDoOutput(true);
 
         try (OutputStream os = conn.getOutputStream()) {
@@ -49,16 +76,19 @@ public class PythonClient {
             os.flush();
         }
 
-        int status = conn.getResponseCode();
-        if (status != 200) {
+        if (conn.getResponseCode() != 200) {
             conn.disconnect();
-            throw new RuntimeException("Python server returned status: " + status);
+            throw new RuntimeException("Python server at " + urlString + " returned status: " + conn.getResponseCode());
         }
-        BufferedReader br = new BufferedReader(new InputStreamReader(conn.getInputStream()));
-        StringBuilder sb = new StringBuilder();
-        String line;
-        while ((line = br.readLine()) != null) sb.append(line);
-        conn.disconnect();
-        return sb.toString();
+
+        try (BufferedReader br = new BufferedReader(new InputStreamReader(conn.getInputStream()))) {
+            StringBuilder sb = new StringBuilder();
+            String line;
+            while ((line = br.readLine()) != null) {
+                sb.append(line);
+            }
+            conn.disconnect();
+            return sb.toString();
+        }
     }
 }
