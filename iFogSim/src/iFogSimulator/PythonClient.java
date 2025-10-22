@@ -1,65 +1,40 @@
 package iFogSimulator;
 
+import org.json.JSONObject;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 
-/**
- * PythonClient - UPDATED
- *
- * This client now communicates with two separate CI microservices:
- * 1. The GA Classifier on port 5000 to get a priority label.
- * 2. The Fuzzy Allocator on port 6000 to get a resource decision.
- */
 public class PythonClient {
 
-    private final String gaServerUrl = "http://127.0.0.1:5000";
-    private final String fuzzyServerUrl = "http://127.0.0.1:6000";
+    private final String aiServerUrl = "http://127.0.0.1:5000";
+    private final String fuzzyServerUrl = "http://127.0.0.1:8080";
 
-    public PythonClient() {
-        // Constructor is now empty
-    }
+    public PythonClient() {}
 
     /**
-     * Calls the GA server to get a priority classification.
-     * @return The priority label as a String (e.g., "HIGH", "MEDIUM", "LOW").
+     * This method now accepts the correct features and builds the correct JSON payload.
      */
-    public String predictPriority(double drowsiness, double rain, double speed, double humidity) throws Exception {
+    public String predictPriority(double trafficDensity, int timeOfDay, int weather, double visibility) throws Exception {
         String endpoint = "/predict_priority";
+
         String payload = String.format(
-                "{\"drowsiness\": %.4f, \"rain\": %.4f, \"speed\": %.2f, \"humidity\": %.4f}",
-                drowsiness, rain, speed, humidity
+                "{\"traffic_density\": %.2f, \"time_of_day\": %d, \"weather\": %d, \"visibility\": %.2f}",
+                trafficDensity, timeOfDay, weather, visibility
         );
 
-        String response = post(gaServerUrl + endpoint, payload);
-
-        // Parse JSON response like {"priority": "HIGH"}
-        if (response != null && response.contains("priority")) {
-            return response.split(":")[1].replace("\"", "").replace("}", "").trim();
-        }
-        return "LOW"; // Fallback
+        String response = post(aiServerUrl + endpoint, payload);
+        JSONObject jsonResponse = new JSONObject(response);
+        return jsonResponse.getString("priority");
     }
 
-    /**
-     * Calls the Fuzzy Logic server to get a resource allocation decision.
-     * @param priorityLabel The label obtained from the GA server.
-     * @return The full decision string from the fuzzy server.
-     */
     public String allocateResources(String priorityLabel) throws Exception {
         String endpoint = "/allocate_resources";
         String payload = String.format("{\"priority\": \"%s\"}", priorityLabel);
-
         String response = post(fuzzyServerUrl + endpoint, payload);
-
-        // Parse decision from a complex JSON, for logging we just return the 'decision' field
-        if (response != null && response.contains("decision")) {
-            // A simple parse for the main decision string
-            String decision = response.split("\"decision\": \"")[1];
-            return decision.substring(0, decision.length() - 2); // Remove trailing "}"
-        }
-        return "No allocation decision received.";
+        return response; // Return the full JSON string
     }
 
     private String post(String urlString, String jsonPayload) throws Exception {
@@ -67,8 +42,8 @@ public class PythonClient {
         HttpURLConnection conn = (HttpURLConnection) url.openConnection();
         conn.setRequestMethod("POST");
         conn.setRequestProperty("Content-Type", "application/json");
-        conn.setConnectTimeout(2000);
-        conn.setReadTimeout(2000);
+        conn.setConnectTimeout(5000);
+        conn.setReadTimeout(5000);
         conn.setDoOutput(true);
 
         try (OutputStream os = conn.getOutputStream()) {
@@ -76,9 +51,16 @@ public class PythonClient {
             os.flush();
         }
 
-        if (conn.getResponseCode() != 200) {
-            conn.disconnect();
-            throw new RuntimeException("Python server at " + urlString + " returned status: " + conn.getResponseCode());
+        int status = conn.getResponseCode();
+        if (status != 200) {
+            try (BufferedReader br = new BufferedReader(new InputStreamReader(conn.getErrorStream()))) {
+                StringBuilder errorResponse = new StringBuilder();
+                String line;
+                while ((line = br.readLine()) != null) {
+                    errorResponse.append(line);
+                }
+                throw new RuntimeException("Python server returned HTTP Status " + status + " with message: " + errorResponse.toString());
+            }
         }
 
         try (BufferedReader br = new BufferedReader(new InputStreamReader(conn.getInputStream()))) {
