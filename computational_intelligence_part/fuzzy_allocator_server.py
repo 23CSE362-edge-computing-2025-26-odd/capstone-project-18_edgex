@@ -4,7 +4,7 @@ import numpy as np
 import skfuzzy as fuzz
 from skfuzzy import control as ctrl
 
-app = Flask(name)
+app = Flask(_name_)
 
 # --- Fuzzy System Definition (runs once at startup) ---
 priority = ctrl.Antecedent(np.arange(0, 11, 1), 'priority')
@@ -44,5 +44,6 @@ def allocate_resources():
     return jsonify(decision)
 
 # --- Run Server ---
-if name == 'main':
-    app.run(port=8080)
+
+if _name_ == '_main_':
+    app.run(host="0.0.0.0", port=8080)
